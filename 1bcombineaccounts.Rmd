@@ -1,0 +1,380 @@
+---
+title: "Council accounts"
+output: html_notebook
+---
+
+# Council accounts - combining
+
+This notebook details the process of combining council accounts.
+
+The data comes from the Ministry of Housing, Communities & Local Government's [Local authority revenue expenditure and financing collection](https://www.gov.uk/government/collections/local-authority-revenue-expenditure-and-financing). 
+
+We have downloaded the data for 2010/11 onwards with the intention of using the script to add new figures when new data is published.
+
+## Breaking down the problem
+
+Here are the tasks we need to complete:
+
+1. Combine the spreadsheets
+2. Perform basic cleaning (remove redundant rows, combine/clarify headings across multiple cells)
+3. Create a subset containing the data we want to focus on
+4. Perform analysis
+
+The files are in the same folder in this script with names like *RS_2015-16_data_by_LA_-_Revision.xlsx* - but 5 use one format and the latest 2 use a different format.
+
+Let's start with activating some useful packages.
+
+```{r}
+#Activate the library for handling Excel files, and for calling URLs
+library(readxl)
+library(httr)
+```
+
+## Clean the spreadsheet while importing
+
+Now to import those sheets, and clean along the way. 
+
+There are two problems here: first, the column headers don't start until row 4; and second, those headers are spread across 3 rows.
+
+The most detailed headings are in row 7, with related codes for each heading in row 6, and broader categories in row 5. So we skip to row 7 for the main dataset, and store the other headings in another data frame just in case.
+
+This is best stored in a function so we can run it on the new data, but we test it first.
+
+```{r}
+#Read that file into a new data frame
+#We want the 3rd sheet, and to skip the first 6 lines so row 7 is used for headers
+#We also ask it to class dashes and lack of data as NA
+ro1516 <- read_excel("RS_2015-16_data_by_LA_-_Revision.xlsx", 
+                              sheet = 3, 
+                              skip = 6, 
+                              na = "c('-','')")
+
+#Grab the other headings
+ro1516.otherheads <- read_excel("RS_2015-16_data_by_LA_-_Revision.xlsx", 
+                                sheet = 3, skip = 4, n_max = 1, range = "A6:IR6")
+
+
+ro1617 <- read_excel("RS_2016-17_data_by_LA.xlsx", 
+                              sheet = 3, 
+                              skip = 6, 
+                              na = "c('-','')")
+# Test the columns are the same
+colnames(ro1516) == colnames(ro1617)
+
+```
+
+The columns are not the same. So we need to extract a few and create two data frames which are the same:
+
+```{r}
+#Check the colnames
+colnames(ro1516) 
+#Add to the front of each the code from the other list
+colnames(ro1516) <- paste(head(colnames(ro1516.otherheads),length(colnames(ro1516))),
+                          colnames(ro1516), sep=":")
+colnames(ro1516) 
+```
+
+
+## Create a subset
+
+There are 252 variables in this spreadsheet, so let's narrow down to the ones we want to focus on.
+
+We can use regex to find the columns where 'Social Care' is mentioned:
+
+```{r}
+#The grepl function is used to generate a series of TRUE/FALSE matches for each column
+#That is then nested within square brackets after the colnames function to show those that are TRUE
+colnames(ro1516)[grepl("Social Care",colnames(ro1516))]
+#Let's try some others
+colnames(ro1516)[grepl(".*Highway.*",colnames(ro1516))]
+colnames(ro1516)[grepl(".*GFRA*",colnames(ro1516))]
+colnames(ro1516)[grepl("Public Health",colnames(ro1516))]
+colnames(ro1516)[grepl(".*Cultural*",colnames(ro1516))]
+colnames(ro1516)[grepl(".*Environmental*",colnames(ro1516))]
+colnames(ro1516)[grepl(".*Planning*",colnames(ro1516))]
+colnames(ro1516)[grepl(".*Education*",colnames(ro1516))]
+#And reserves
+colnames(ro1516)[grepl(".*at 1 April*",colnames(ro1516))]
+```
+
+We also need to grab the first few columns:
+
+```{r}
+ro1516.las <- ro1516[c(1,2,3,5)]
+```
+
+
+
+Now that we think we have the right columns, let's generate that subset:
+
+```{r}
+listofterms <- "Social Care|Highway|GFRA|Public Health|Cultural|Environmental|Planning|Education|at 1 April"
+#We remove 'colnames' now so we are accessing the data frame as a whole
+ro1516.sub <- ro1516[grepl(listofterms,
+                           colnames(ro1516))]
+#Add in the LA details extracted earlier
+ro1516.sub <- cbind(ro1516.las,ro1516.sub)
+```
+
+We've now gone from 252 variables to 20, which is going to be much easier to deal with.
+
+## Storing in a function
+
+The question is, can we store all those steps in a function so we don't have to write them all over again?
+
+```{r}
+stripbackro <- function(filename, year){
+  #read from Excel into an object 
+  roobject <- read_excel(filename, 
+                          sheet = 3, 
+                          skip = 6, 
+                          na = "c('-','')")
+  #Store the first few columns separately
+  roobject.las <- roobject[c(1,2,3,5)]
+  #Read from Excel again to grab the codes
+  roobject.otherheads <- read_excel(filename, 
+                                sheet = 3, skip = 4, n_max = 1, range = "A6:IR6")
+  #Combine the codes with the relevant column headings
+  colnames(roobject) <- paste(head(colnames(roobject.otherheads),length(colnames(roobject))),
+                          colnames(roobject), sep=": ")
+  #Create a list of terms that we can use to filter
+  listofterms <- "Social Care|Highway|GFRA|Public Health|Cultural|Environmental|Planning|Education|at 1 April"
+  #Use grepl to filter to just those columns containing the keywords
+  roobject.sub <- roobject[grepl(listofterms,
+                           colnames(roobject))]
+  #Add in the LA details extracted earlier
+  roobject.sub <- cbind(roobject.las,roobject.sub)
+  roobject.sub$year <- year
+  #Return to whatever called this function
+  return(roobject.sub)
+}
+```
+
+And can we remove the 'other' and shire districts..?
+
+### Subsetting by type of organisation
+
+We also need to remove all the organisations we don't want. The type of organisation is shown in the 'Class' column:
+
+```{r}
+table(ro1516$`X__1:Class`)
+```
+
+We don't want shire districts (SD), or other authorities such as police or fire (O). 
+
+```{r}
+stripbackro <- function(filename, year){
+  #read from Excel into an object 
+  roobject <- read_excel(filename, 
+                          sheet = 3, 
+                          skip = 6, 
+                          na = "c('-','')")
+  #Store the first few columns separately
+  roobject.las <- roobject[c(1,2,3,5)]
+  #Read from Excel again to grab the codes
+  roobject.otherheads <- read_excel(filename, 
+                                sheet = 3, skip = 4, n_max = 1, range = "A6:IR6")
+  #Combine the codes with the relevant column headings
+  colnames(roobject) <- paste(head(colnames(roobject.otherheads),length(colnames(roobject))),
+                          colnames(roobject), sep=": ")
+  #Create a list of terms that we can use to filter
+  listofterms <- "Social Care|Highway|GFRA|Public Health|Cultural|Environmental|Planning|Education|at 1 April"
+  #Use grepl to filter to just those columns containing the keywords
+  roobject.sub <- roobject[grepl(listofterms,
+                           colnames(roobject))]
+  #Add in the LA details extracted earlier
+  roobject.sub <- cbind(roobject.las,roobject.sub)
+  roobject.sub$year <- year
+  #Subset so we don't have those with Class codes O or SD
+  roobject.sub <- subset(roobject.sub,roobject.sub$Class != "O" & roobject.sub$Class != "SD")
+  #Subset so we only have rows where the code is not NA
+  roobject.sub <- subset(roobject.sub,roobject.sub$`E-code` != "NA")
+  #Return to whatever called this function
+  return(roobject.sub)
+}
+```
+
+And let's try it:
+
+```{r}
+#Supply 2 arguments: the filename and the year
+ro1617.sub <- stripbackro("RS_2016-17_data_by_LA.xlsx", 2017)
+#Show first few rows
+head(ro1617.sub)
+table(ro1617.sub$Class)
+```
+
+
+```{r}
+#Supply 2 arguments: the filename and the year
+ro1516.sub <- stripbackro("RS_2015-16_data_by_LA_-_Revision.xlsx", 2016)
+#Show first few rows
+head(ro1516.sub)
+table(ro1516.sub$Class)
+```
+
+## Combining the files
+
+We can try an `rbind` but it will throw an error, because some column names are not the same:
+
+```{r}
+#ro.all <- rbind(ro1516.sub,ro1617.sub)
+colnames(ro1516.sub) == colnames(ro1617.sub)
+```
+
+A quick check shows that they do contain the same info (same codes) but with different phrasing:
+
+```{r}
+colnames(ro1516.sub[c(seq(16,20))])
+colnames(ro1617.sub[c(seq(16,20))])
+```
+
+We could fix this by renaming the columns:
+
+
+```{r}
+cols16on <- c("school reserves at 1 April","public health reserves at 1 April","other earmarked reserves at 1 April","unallocated financial reserves at 1 April", "Housing Revenue Account (HRA) reserves at 1 April")
+colnames(ro1516.sub)[c(seq(16,20))] <- c("school reserves at 1 April","public health reserves at 1 April","other earmarked reserves at 1 April","unallocated financial reserves at 1 April", "Housing Revenue Account (HRA) reserves at 1 April")
+colnames(ro1516.sub[c(seq(16,20))])
+colnames(ro1617.sub)[c(seq(16,20))] <- colnames(ro1516.sub)[c(seq(16,20))]
+colnames(ro1516.sub[c(seq(16,20))]) == colnames(ro1617.sub[c(seq(16,20))])
+ro.all <- rbind(ro1516.sub,ro1617.sub)
+```
+
+## Repeating for the older datasets
+
+The older datasets have a different structure so need to be imported and handled separately before being combined.
+
+```{r}
+#Read the file into a new data frame
+#We want the 3rd sheet, and to skip the first 5 lines so row 6 is used for headers
+#We also ask it to class dashes and lack of data as NA
+ro1011 <- read_excel("Revenue_Outturn_Summary__RS__data_2010-11_by_LA_-_27-Nov-2012-v2.xls", sheet = 3, skip = 5, na = "c('-','')")
+
+ro1112 <- read_excel("Revenue_Outturn_Summary__RS__data_2011-12_by_LA_-_Revised_28-Nov-2013.xls", sheet = 3, skip = 5, na = "c('-','')")
+
+# Test the columns are the same
+colnames(ro1011) == colnames(ro1112)
+```
+
+Again we can see that the column names will need to be made consistent. 
+
+First, though, let's create a function to whittle the data down
+
+Once again, use regex to find the columns where 'Social Care' and other terms are mentioned:
+
+```{r}
+#The grepl function is used to generate a series of TRUE/FALSE matches for each column
+#That is then nested within square brackets after the colnames function to show those that are TRUE
+colnames(ro1011)[grepl(".*Education*",colnames(ro1011))]
+colnames(ro1011)[grepl(".*Highway.*",colnames(ro1011))]
+colnames(ro1011)[grepl("Social Care",colnames(ro1516))]
+colnames(ro1011)[grepl("Public Health",colnames(ro1011))]
+colnames(ro1011)[grepl(".*GFRA*",colnames(ro1011))]
+colnames(ro1011)[grepl(".*Cultural*",colnames(ro1011))]
+colnames(ro1011)[grepl(".*Environmental*",colnames(ro1011))]
+colnames(ro1011)[grepl(".*Planning*",colnames(ro1011))]
+#And reserves
+colnames(ro1011)[grepl(".*at 1 April*",colnames(ro1011))]
+```
+
+Some of these are the fields we want:
+
+```{r}
+colnames(ro1516.sub)
+```
+
+
+
+
+Looking at the spreadsheets themselves we can note that most of the key fields are in the first 12 columns, but as the years go on, child social care is added in 2011/12 and then public health in 2012/13. In 2014/15 everything shifts one column to the right as they add region, and ONS codes appear. That dataset might need to be handled separately.
+
+It is tricky anyway: we need to account for columns of missing data.
+
+```{r}
+stripbackropre14 <- function(filename, year){
+  #read from Excel into an object 
+  roobject <- read_excel(filename, 
+                          sheet = 3, 
+                          skip = 5, 
+                          na = "c('-','')")
+  #Store the first few columns separately
+  roobject.sub <- roobject[c(1,3,2,4)]
+  #We are also missing the ONS code column - we grabbed an empty column so we can rename it
+  colnames(roobject.sub)[2] = "ONS Code"
+  roobject.sub$`190: Education services` <- roobject$`Education services`
+  roobject.sub$`290: Highways and transport services` <- roobject$`Highways and transport services`
+  #This doesn't exist in early data so we need to handle that with tryCatch
+  tryCatch(roobject.sub$`330: Children Social Care` <- roobject$`Children Social Care`, finally = roobject.sub$`330: Children Social Care` <- "NO DATA")
+  #Both child and adult social care is aggregated as 'Social Care' in the first year
+  tryCatch(roobject.sub$`360: Adult Social Care` <- roobject$`Adult Social Care`,finally = roobject.sub$`360: Adult Social Care` <- "NO BREAKDOWN")
+  #This doesn't exist in early data so we need to handle that with tryCatch
+  tryCatch(roobject.sub$`390: Public Health` <- roobject$`Public Health`, finally = roobject.sub$`390: Public Health` <- "NO DATA")
+  roobject.sub$`490: Housing services (GFRA only)` <- roobject$`Housing services (GFRA only)`
+  roobject.sub$`509: Cultural and related services` <- roobject$`Cultural and related services`
+  roobject.sub$`590: Environmental and regulatory services` <- roobject$`Environmental and regulatory services`
+  roobject.sub$`599: Planning and development services` <- roobject$`Planning and development services`
+  roobject.sub$`765: Capital expenditure charged to the GF Revenue Account (CERA) (exclude Public Health)` <- roobject$`Capital expenditure charged to the GF Revenue Account (CERA)`
+  roobject.sub$`765: Capital expenditure charged to the GF Revenue Account (CERA) (exclude Public Health)` <- "NO DATA"
+  roobject.sub$`school reserves at 1 April` <- roobject.sub$`Schools reserves level`
+  #Data only exists in later releases
+  tryCatch(roobject.sub$`public health reserves at 1 April` <- roobject.sub$`Public Health financial reserves level`, finally = roobject.sub$`public health reserves at 1 April` <- "NO DATA")
+  roobject.sub$`other earmarked reserves at 1 April` <- roobject.sub$`Other earmarked financial reserves level`
+  roobject.sub$`unallocated financial reserves at 1 April` <- roobject.sub$`Unallocated financial reserves level`
+  #Use grepl to filter to just those columns containing the keywords
+  roobject.hra <- roobject[grepl("Housing Revenue Account (HRA) Reserves", colnames(roobject))]
+  #tryCatch(roobject.sub$`Housing Revenue Account (HRA) reserves at 1 April` <- roobject.sub$`Public Health financial reserves level` <- roobject.hra[1], finally = roobject.sub$`Housing Revenue Account (HRA) reserves at 1 April` <- "NO DATA")
+  
+  roobject.sub$year <- year
+  #Subset so we don't have those with Class codes O or SD
+  roobject.sub <- subset(roobject.sub,roobject.sub$Class != "O" & roobject.sub$Class != "SD")
+  #Subset so we only have rows where the code is not NA
+  roobject.sub <- subset(roobject.sub,roobject.sub$`E-code` != "NA")
+  #Return to whatever called this function
+  return(roobject.sub)
+}
+```
+
+Now test:
+
+```{r}
+ro1011.sub <- stripbackropre14("Revenue_Outturn_Summary__RS__data_2010-11_by_LA_-_27-Nov-2012-v2.xls",2011)
+ro1112.sub <- stripbackropre14("Revenue_Outturn_Summary__RS__data_2011-12_by_LA_-_Revised_28-Nov-2013.xls",2012)
+```
+
+***5 cols to add - HRA fix plus reserves***
+***NO DATA NEEDS FIXING IN 2012***
+***201415 data needs adding***
+
+
+
+
+
+## Cleaning data types
+
+To check if we need more cleaning we can generate a summary:
+
+```{r}
+summary(ro.all)
+```
+
+This indicates that many of the columns have been imported as characters, rather than numeric, most likely because of the presence of dashes.
+
+We need to fix this. Let's use the `tidyverse` library and use its `guess_parser` function to see what it thinks of one of the columns:
+
+```{r}
+library(tidyverse)
+#Guess the first number columns
+guess_parser(ro.all[,5])
+```
+
+Now a `table` to see what values are in that column:
+
+```{r}
+summary(ro.all[,5])
+table(ro.all[,5])
+```
+
+We'll need to parse it instead as a number during any analysis.
+
+The analysis now takes place in a separate notebook.

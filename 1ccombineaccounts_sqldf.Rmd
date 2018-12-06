@@ -1,0 +1,496 @@
+---
+title: "Council accounts"
+output: html_notebook
+---
+
+# Council accounts: querying change across different years
+
+This notebook details the process of querying multiple council accounts to make comparisons.
+
+The data comes from the Ministry of Housing, Communities & Local Government's [Local authority revenue expenditure and financing collection](https://www.gov.uk/government/collections/local-authority-revenue-expenditure-and-financing). 
+
+We have downloaded the data for 2010/11 onwards with the intention of using the script to add new figures when new data is published.
+
+To make this script work with the new data, download it to the same location as this file, and change the line below:
+
+```{r}
+#Change this name to the name of the latest dataset
+filename <- "RS_2017-18_data_by_LA.xlsx"
+```
+
+
+## Breaking down the problem
+
+Here are the tasks we need to complete:
+
+1. Load the spreadsheets into R
+2. Perform basic cleaning (remove redundant rows, combine/clarify headings across multiple cells)
+3. Create a subset containing the data we want to focus on
+4. Perform analysis across multiple data frames
+
+The files are in the same folder in this script with names like *RS_2015-16_data_by_LA_-_Revision.xlsx*. Some use one format while the latest 2 use a different format. This makes it problematic for combining using functions like `cbind` (see other notebooks in this folder), but SQL queries mean we don't have to combine at all - the combination takes place within analysis.
+
+Let's start with activating some useful packages.
+
+```{r}
+#Activate the library for handling Excel files, and for calling URLs
+library(readxl)
+#Activate the library for running SQL-style queries
+library(sqldf)
+#You could download the files directly, in which case you need this library
+#library(httr)
+```
+
+## Clean the spreadsheet while importing
+
+Now to import those sheets, and clean along the way. 
+
+There are two problems here: first, the column headers don't start until row 4; and second, those headers are spread across 3 rows.
+
+The most detailed headings are in row 7, with related codes for each heading in row 6, and broader categories in row 5. So we skip to row 7 for the main dataset, and store the other headings in another data frame just in case.
+
+This is best stored in a function so we can run it on the new data - but we test it first before creating any functions.
+
+```{r}
+#Read that file into a new data frame
+#We want the 3rd sheet, and to skip the first 6 lines so row 7 is used for headers
+#We also ask it to class dashes and lack of data as NA
+ro1516 <- read_excel("RS_2015-16_data_by_LA_-_Revision.xlsx", 
+                              sheet = 3, 
+                              skip = 6, 
+                              na = "c('-','')",
+                     col_types = "guess") #This helps numeric columns be treated as such
+summary(ro1516)
+```
+
+Let's also store the other headings in case we need to reintegrate them:
+
+```{r}
+#Grab the other headings
+ro1516.otherheads <- read_excel("RS_2015-16_data_by_LA_-_Revision.xlsx", 
+                                sheet = 3, skip = 4, n_max = 1, range = "A6:IR6")
+```
+
+Now to try the same process on another year's spreadsheet, checking if the column names are the same as our other imported data:
+
+```{r}
+#Read file into a new data frame
+#We want the 3rd sheet, and to skip the first 6 lines so row 7 is used for headers
+#We also ask it to class dashes and lack of data as NA
+ro1617 <- read_excel("RS_2016-17_data_by_LA.xlsx", 
+                              sheet = 3, 
+                              skip = 6, 
+                              na = "c('-','')")
+# Test the columns are the same
+colnames(ro1516) == colnames(ro1617)
+```
+
+The columns are not all the same. This makes it harder to combine, so we'll come back to that.
+
+We can make it a bit easier to compare by bringing in the *codes* associated with each column of data. That was stored in the 'otherheads' data frame we created. This is how we can add those to the front of each column in our data:
+
+```{r}
+#Check the colnames
+colnames(ro1516) 
+#Add to the front of each the code from the other list
+colnames(ro1516) <- paste(head(colnames(ro1516.otherheads),length(colnames(ro1516))),
+                          colnames(ro1516), sep=":")
+#Show us the column names now
+colnames(ro1516) 
+```
+
+## Import the latest data (2017/18)
+
+Now we can run the lines below which import the latest data.
+
+```{r}
+#Read that file into a new data frame
+#We want the 3rd sheet, and to skip the first 6 lines so row 7 is used for headers
+#We also ask it to class dashes and lack of data as NA
+ro1718 <- read_excel(filename, 
+                              sheet = 3, 
+                              skip = 6, 
+                              na = "c('-','')",
+                     col_types = "guess") #This helps numeric columns be treated as such
+summary(ro1718)
+```
+
+### Import the older data (2010 - 2015)
+
+The older datasets have a different structure so need to be imported and handled separately before being combined. We don't use most of these again in this workbook, but in a separate workbook (1ccombineaccounts_cbind.Rmd) these are cleaned and subsetted.
+
+```{r}
+#Read the file into a new data frame
+#We want the 3rd sheet, and to skip the first 5 lines so row 6 is used for headers
+#We also ask it to class dashes and lack of data as NA
+ro1112 <- read_excel("Revenue_Outturn_Summary__RS__data_2010-11_by_LA_-_27-Nov-2012-v2.xls", sheet = 3, skip = 5, na = "c('-','')",col_types = "guess")
+
+ro1112 <- read_excel("Revenue_Outturn_Summary__RS__data_2011-12_by_LA_-_Revised_28-Nov-2013.xls", sheet = 3, skip = 5, na = "c('-','')",col_types = "guess")
+
+ro1213 <- read_excel("Revenue_Outturn_Summary__RS__data_2012-13_by_LA__Revised__-_18-Feb-2014.xls", sheet = 3, skip = 5, na = "c('-','')",col_types = "guess")
+
+ro1314 <- read_excel("Revenue_Outturn_Summary__RS__data_2013-14_by_LA_-_Revised_28-Jan-2015.xls", sheet = 3, skip = 5, na = "c('-','')",col_types = "guess")
+
+ro1415 <- read_excel("Revenue_Outturn_Summary__RS__data_2014-15_by_LA_-_02-Feb-2016.xls", sheet = 3, skip = 5, na = "c('-','')",col_types = "guess")
+```
+
+## Create a subset for main overall categories of spending
+
+There are 100 variables in this spreadsheet, so let's narrow down to the ones we want to focus on.
+
+We can use regex to find the columns where 'Social Care' is mentioned:
+
+```{r}
+#The grepl function is used to generate a series of TRUE/FALSE matches for each column
+#That is then nested within square brackets after the colnames function to show those that are TRUE
+colnames(ro1516)[grepl("Social Care",colnames(ro1516))]
+#Let's try some others
+colnames(ro1516)[grepl(".*Highway.*",colnames(ro1516))]
+colnames(ro1516)[grepl(".*GFRA*",colnames(ro1516))]
+colnames(ro1516)[grepl("Public Health",colnames(ro1516))]
+colnames(ro1516)[grepl(".*Cultural*",colnames(ro1516))]
+colnames(ro1516)[grepl(".*Environmental*",colnames(ro1516))]
+colnames(ro1516)[grepl(".*Planning*",colnames(ro1516))]
+colnames(ro1516)[grepl(".*Education*",colnames(ro1516))]
+#And reserves
+colnames(ro1516)[grepl(".*at 1 April*",colnames(ro1516))]
+```
+
+We also need to grab the first few columns:
+
+```{r}
+ro1516.las <- ro1516[c(1,2,3,5)]
+colnames(ro1516.las)
+```
+
+
+
+Now that we think we have the right columns, let's generate that subset:
+
+```{r}
+#Create a list of key terms that we can use to match columns against
+listofterms <- "Social Care|Highway|GFRA|Public Health|Cultural|Environmental|Planning|Education|at 1 April"
+#This tells us which columns match that list
+grepl(listofterms, colnames(ro1516))
+#We nest that in square brackets to index the relevant columns from the data frame as a whole
+ro1516.sub <- ro1516[grepl(listofterms, colnames(ro1516))]
+#Check the results
+colnames(ro1516.sub)
+#Add in the LA details extracted earlier
+ro1516.sub <- cbind(ro1516.las,ro1516.sub)
+```
+
+We've now gone from 100 variables to 16, which is going to be much easier to deal with.
+
+## Storing in a function
+
+The question is, can we store all those steps in a function so we don't have to write them all over again?
+
+```{r}
+stripbackro.horiz <- function(filename, year){
+  #read from Excel into an object 
+  roobject <- read_excel(filename, 
+                          sheet = 3, 
+                          skip = 6, 
+                          na = "c('-','')",
+                         col_types = "guess")
+  #Store the first few columns separately
+  roobject.las <- roobject[c(1,2,3,5)]
+  #Read from Excel again to grab the codes
+  roobject.otherheads <- read_excel(filename, 
+                                sheet = 3, skip = 4, n_max = 1, range = "A6:IR6")
+  #Combine the codes with the relevant column headings
+  colnames(roobject) <- paste(head(colnames(roobject.otherheads),length(colnames(roobject))),
+                          colnames(roobject), sep=": ")
+  #Add the year as a prefix
+  colnames(roobject) <- paste(year, colnames(roobject), sep=": ")
+  #Create a list of terms that we can use to filter
+  listofterms <- "Social Care|Highway|GFRA|Public Health|Cultural|Environmental|Planning|Education|at 1 April"
+  #Use grepl to filter to just those columns containing the keywords
+  roobject.sub <- roobject[grepl(listofterms,
+                           colnames(roobject))]
+  #Add in the LA details extracted earlier
+  roobject.sub <- cbind(roobject.las,roobject.sub)
+  #No need to add the year in this version
+  #roobject.sub$year <- year
+  #Return to whatever called this function
+  return(roobject.sub)
+}
+```
+
+And can we remove the 'other' and shire districts..?
+
+## SQL queries across multiple objects
+
+Instead of querying the combined data we can use SQL to query the earliest and latest datasets.
+
+The query is quite long. The first part selects all the fields it wants to use. In some cases it renames those using `AS`, and in some cases it creates new fields by performing calculations. For example:
+
+`(ro1617.`Cultural and related services` - ro1112.`Cultural and related services`) / ro1112.`Cultural and related services` AS culpercchange1117`
+
+This subtracts one figure (the 2012 figures - used because social and adult care were not separated in 2010/11) from another (the 2017 figures), then divides the result by the original figure (2011) to calculate a percentage change.
+
+The second part uses `LEFT JOIN` to join the 2016/17 dataset to the 2010/11 dataset and specifies `ON` which column the two can be matched.
+
+The third part uses `WHERE` to filter so we don't get shire districts or 'other' authorities.
+
+And the final part uses `ORDER BY` so we get it ordered by authorities with the largest percentage change.
+
+```{r}
+sqldf("SELECT ro1112.`E-code`, ro1112.`Local authority`, ro1112.`Class`, ro1112.`Cultural and related services` AS culture1112, ro1617.`Cultural and related services` AS culture1617, ro1617.`Cultural and related services` - ro1112.`Cultural and related services` AS culchange1117, (ro1617.`Cultural and related services` - ro1112.`Cultural and related services`)/ro1112.`Cultural and related services` AS culpercchange1117 from ro1112 
+      LEFT JOIN ro1617 
+      ON ro1112.`E-code` = ro1617.`E-code`
+      WHERE ro1112.`Class` != 'O' AND ro1112.`Class` != 'SD' AND ro1112.`E-code` != 'NA'
+      ORDER BY culpercchange1117 ASC
+      ")
+```
+
+Now the code is adapted for the latest data (2017/18:
+
+```{r}
+sqldf("SELECT ro1112.`E-code`, ro1112.`Local authority`, ro1112.`Class`, ro1112.`Cultural and related services` AS culture1112, ro1718.`Cultural and related services` as culture1718, ro1718.`Cultural and related services` - ro1112.`Cultural and related services` AS culchange1118, (ro1718.`Cultural and related services` - ro1112.`Cultural and related services`)/ro1112.`Cultural and related services` AS culpercchange1118 from ro1112 
+      LEFT JOIN ro1718
+      ON ro1112.`E-code` = ro1718.`E-code`
+      WHERE ro1112.`Class` != 'O' AND ro1112.`Class` != 'SD' AND ro1112.`E-code` != 'NA'
+      ORDER BY culpercchange1118 ASC
+      ")
+```
+
+At the moment this isn't stored anywhere, but we test it against other categories first...
+
+### For culture
+
+```{r}
+sqldf("SELECT ro1112.`E-code`, ro1112.`Local authority`, ro1112.`Class`, ro1112.`Cultural and related services` AS culture1112, ro1718.`Cultural and related services` as culture1718, ro1718.`Cultural and related services` - ro1112.`Cultural and related services` AS culchange1118, (ro1718.`Cultural and related services` - ro1112.`Cultural and related services`)/ro1112.`Cultural and related services` AS culpercchange1118 from ro1112 
+      LEFT JOIN ro1718
+      ON ro1112.`E-code` = ro1718.`E-code`
+      WHERE ro1112.`Class` != 'O' AND ro1112.`Class` != 'SD' AND ro1112.`E-code` != 'NA'
+      ORDER BY culpercchange1118 ASC
+      ")
+```
+
+## Automatically generate the SQL query based on a column
+
+We need to find a way to generate the SQL query, given a column heading. First let's see what we have:
+
+```{r}
+head(colnames(ro1617),20)
+```
+
+Let's try to generate a query that should give us the same results as the cultural one:
+
+```{r}
+#Specify the column we want to grab
+colwewant <- "`Cultural and related services`"
+#Generate the query by using paste to insert that column in the appropriate places
+querywewant <- paste("SELECT ro1112.`E-code`, ro1112.`Class`, ro1112.`Local authority`, ro1112.",", ro1112."," AS culture1112, ro1718."," as culture1718, ro1718."," - ro1112."," AS culchange1118, (ro1718."," - ro1112.",")/ro1112."," AS culpercchange1118 from ro1112 LEFT JOIN ro1718 ON ro1112.`E-code` = ro1718.`E-code` WHERE ro1112.`Class` != 'O' AND ro1112.`Class` != 'SD' AND ro1112.`E-code` != 'NA' ORDER BY culpercchange1118 ASC","",sep=colwewant)
+#The paste function inserts that string at the end too but we need to remove that
+#So we work out how many characters are in the query
+nchar(querywewant)
+#How many are in the text we want to remove
+nchar(colwewant)
+#And the characters we need by subtracting one from the other
+nchar(querywewant) - nchar(colwewant)
+#Now 'clean up' the query by reducing it to the characters up to the point where the unneeded text appears
+querywewant <- substr(querywewant,1,nchar(querywewant) - nchar(colwewant))
+```
+
+Now to test:
+
+```{r}
+querywewant
+sqldf(querywewant)
+```
+
+Let's store this in a function:
+
+```{r}
+givemesqlquery <- function(colwewant){
+  #Generate the query by using paste to insert that column in the appropriate places
+  querywewant <- paste("SELECT ro1112.`E-code`, ro1112.`Class`, ro1112.`Local authority`, ro1112.",", ro1112."," AS figs1112, ro1718."," as figs1718, ro1718."," - ro1112."," AS change1118, (ro1718."," - ro1112.",")/ro1112."," AS percchange1118 from ro1112 LEFT JOIN ro1718 ON ro1112.`E-code` = ro1718.`E-code` WHERE ro1112.`Class` != 'O' AND ro1112.`Class` != 'SD' AND ro1112.`E-code` != 'NA' ORDER BY percchange1118 ASC","",sep=colwewant)
+  #The paste function inserts that string at the end too but we need to remove that
+  #Now 'clean up' the query by reducing it to the characters up to the point where the unneeded text appears
+  querywewant <- substr(querywewant,1,nchar(querywewant) - nchar(colwewant))
+  #Run that query and store results
+  resultsofquery <- sqldf(querywewant)
+  return(resultsofquery)
+}
+```
+
+And test again, this time storing the results in a new dataframe:
+
+```{r}
+changeculture1218 <- givemesqlquery("`Cultural and related services`")
+changeculture1218
+```
+
+
+### For highways
+
+Try it for highways:
+
+```{r}
+changehighway1218 <- givemesqlquery("`Highways and transport services`")
+changehighway1218
+```
+
+### For housing, environment, planning
+
+Try it for 3 other columns:
+
+```{r}
+head(colnames(ro1617),20)
+changehousing1218 <- givemesqlquery("`Housing services (GFRA only)`")
+changeenviro1218 <- givemesqlquery("`Environmental and regulatory services`")
+changeplanning1218 <- givemesqlquery("`Planning and development services`")
+changehousing1218
+changeenviro1218
+changeplanning1218
+```
+
+
+### For social care
+
+Social care and public health weren't in the 2010/11 figures so we need to generate a different query. This means adapting our function:
+
+```{r}
+givemesqlquery.fromto <- function(colwewant,fromdata,todata){
+  #Generate the query by using paste to insert that column in the appropriate places
+  querywewant <- paste("SELECT ro1112.`E-code`, ro1112.`Local authority`, ro1112.`Class`, ro1112.",", ro1112."," AS figs1112, ro1718."," as figs1718, ro1718."," - ro1112."," AS change, (ro1718."," - ro1112.",")/ro1112."," AS percchange from ro1112 LEFT JOIN ro1718 ON ro1112.`E-code` = ro1718.`E-code` WHERE ro1112.`Class` != 'O' AND ro1112.`Class` != 'SD' AND ro1112.`E-code` != 'NA' ORDER BY percchange ASC","",sep=colwewant)
+  #The paste function inserts that string at the end too but we need to remove that
+  #Now 'clean up' the query by reducing it to the characters up to the point where the unneeded text appears
+  querywewant <- substr(querywewant,1,nchar(querywewant) - nchar(colwewant))
+  #replace the specific datasets with those passed to the function
+  querywewant <- gsub("ro1112",fromdata,querywewant)
+  querywewant <- gsub("ro1718",todata,querywewant)
+  querywewant <- gsub("figs1112",fromdata,querywewant)
+  querywewant <- gsub("figs1718",todata,querywewant)
+  #Uncomment for debugging
+  #print(querywewant)
+  #Run that query and store results
+  resultsofquery <- sqldf(querywewant)
+  return(resultsofquery)
+}
+```
+
+### Child social care, adult social care: 2012-18
+
+Now using the new function
+
+```{r}
+changechildsoc1218 <- givemesqlquery.fromto("`Children Social Care`","ro1112","ro1718")
+changeadultsoc1218 <- givemesqlquery.fromto("`Adult Social Care`","ro1112","ro1718")
+changechildsoc1218
+changeadultsoc1218
+```
+
+### Aside: data checking 
+
+It's worth pointing out that if we matched on local authority name we would have missed a few councils beacuse Middlesbrough is misspelt as "Middlesborough" in the earlier years.
+
+```{r}
+middbro <- subset(ro1718, ro1718$`E-code` == "E0702")[grep("Local authority|nallocated|earmarked",colnames(ro1718))]
+middbro
+middbro <- subset(ro1112, ro1112$`E-code` == "E0702")[grep("Local authority|nallocated|earmarked",colnames(ro1112))]
+middbro
+```
+
+
+### Changes in reserves
+
+When it comes to comparing reserves across different years we have a problem with naming:
+
+```{r}
+colnames(ro1112)[grep("reserves",colnames(ro1112))]
+colnames(ro1718)[grep("reserves",colnames(ro1718))]
+```
+
+We can look for patterns in these to specify better terms rather than 'reserves', which match fewer columns:
+
+```{r}
+colnames(ro1112)[grep("unallocated|earmarked",colnames(ro1112))]
+colnames(ro1718)[grep("unallocated|earmarked",colnames(ro1718))]
+
+```
+
+
+We can edit a previous SQL query directly to get some results:
+
+
+```{r}
+#Show us the column names so we can use them in the query
+colnames(ro1112)[grep("nallocated|earmarked",colnames(ro1112))]
+colnames(ro1718)[grep("nallocated|earmarked",colnames(ro1718))]
+#Run a SQL query and store the results in a new data frame
+changeunallocated1218 <- sqldf("SELECT ro1112.`E-code`, ro1112.`Local authority`, ro1112.`Class`, ro1112.`Unallocated financial reserves level`, ro1112.`Unallocated financial reserves level` AS ro1112, ro1718.`Estimated other earmarked financial reserves level at 31 March` as ro1718, ro1718.`Estimated unallocated financial reserves level at 31 March` - ro1112.`Unallocated financial reserves level` AS change, (ro1718.`Estimated unallocated financial reserves level at 31 March` - ro1112.`Unallocated financial reserves level`)/ro1112.`Unallocated financial reserves level` AS percchange from ro1112 
+      LEFT JOIN ro1718 ON ro1112.`E-code` = ro1718.`E-code` 
+      WHERE ro1112.`Class` != 'O' AND ro1112.`Class` != 'SD' AND ro1112.`E-code` != 'NA' 
+      ORDER BY percchange ASC",
+      #This just ensures that columns aren't reclassed as text when first row is text
+      method = c("character","character","numeric","numeric","numeric","numeric","numeric"))
+changeunallocated1218
+```
+
+```{r}
+changeearmarked1218 <- sqldf("SELECT ro1112.`E-code`, ro1112.`Local authority`, ro1112.`Class`, ro1112.`Other earmarked financial reserves level`, ro1112.`Other earmarked financial reserves level` AS ro1112, ro1718.`Estimated other earmarked financial reserves level at 31 March` as ro1718, ro1718.`Estimated other earmarked financial reserves level at 31 March` - ro1112.`Other earmarked financial reserves level` AS change, (ro1718.`Estimated other earmarked financial reserves level at 31 March` - ro1112.`Other earmarked financial reserves level`)/ro1112.`Other earmarked financial reserves level` AS percchange from ro1112 
+      LEFT JOIN ro1718 ON ro1112.`E-code` = ro1718.`E-code` 
+      WHERE ro1112.`Class` != 'O' AND ro1112.`Class` != 'SD' AND ro1112.`E-code` != 'NA' 
+      ORDER BY percchange ASC",
+      #This just ensures that columns aren't reclassed as text when first row is text
+      method = c("character","character","numeric","numeric","numeric","numeric","numeric"))
+changeearmarked1218
+```
+
+
+
+
+## Write to XLSX
+
+We can use the `openxlsx` package to write an Excel workbook with all the tables as sheets.
+
+```{r}
+#Uncomment this if you get an error message about the package not being installed
+#install.packages("openxlsx")
+library(openxlsx)
+#Store a list of sheet names twinned with data frame names
+listofdatasets <- list("changeadultsoc1218" = changeadultsoc1218, "changechildsoc1218" = changechildsoc1218, "changeculture1218" = changeculture1218, "changeenviro1218" = changeenviro1218,"changehighway1218" = changehighway1218, "changehousing1218" = changehousing1218, "changeplanning1218" = changeplanning1218, "changeunallocated1218" = changeunallocated1218, "changeearmarked1218", changeearmarked1218)
+#Write to XLSX
+write.xlsx(listofdatasets, file = "changes1218.xlsx")
+
+```
+
+We can also generate a query that pulls in from all tables:
+
+```{r}
+alltables <- sqldf("SELECT * FROM changeadultsoc1218,changechildsoc1218,changeculture1218,changeenviro1218,changehighway1218,changehousing1218,changeplanning1218")
+```
+
+
+```{r}
+alltables <- sqldf("SELECT * FROM changeadultsoc1218,changechildsoc1218,changeenviro1218,changehighway1218,changehousing1218,changeplanning1218,changeunallocated1218,changeearmarked1218
+                   WHERE changeadultsoc1218.`E-code` = changechildsoc1218.`E-code`
+                   AND changeadultsoc1218.`E-code` = changeenviro1218.`E-code`
+                   AND changeadultsoc1218.`E-code` = changehighway1218.`E-code`
+                   AND changeadultsoc1218.`E-code` = changehousing1218.`E-code`
+                   AND changeadultsoc1218.`E-code` = changeplanning1218.`E-code`
+                   AND changeadultsoc1218.`E-code` = changeunallocated1218.`E-code`
+                   AND changeadultsoc1218.`E-code` = changeearmarked1218.`E-code`")
+write.csv(alltables,"changetablescombined.csv")
+```
+
+Can we extract averages, etc.
+
+```{r}
+#The categories are always in the 3rd column of each 7-column range
+#so we can access them like this:
+sheetnameindexes = seq(3,56,7)
+colnames(alltables)[sheetnameindexes]
+#The percentages are always in col 7
+percindexes = seq(7,56,7)
+colnames(alltables)[percindexes]
+```
+
+```{r}
+alltables[percindexes]
+```
+

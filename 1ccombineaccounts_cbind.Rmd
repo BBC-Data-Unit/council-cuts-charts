@@ -1,0 +1,471 @@
+---
+title: "Council accounts"
+output: html_notebook
+---
+
+# Council accounts - combining horizontally
+
+This notebook details the process of combining council accounts.
+
+The data comes from the Ministry of Housing, Communities & Local Government's [Local authority revenue expenditure and financing collection](https://www.gov.uk/government/collections/local-authority-revenue-expenditure-and-financing). 
+
+We have downloaded the data for 2010/11 onwards with the intention of using the script to add new figures when new data is published.
+
+## Breaking down the problem
+
+Here are the tasks we need to complete:
+
+1. Combine the spreadsheets
+2. Perform basic cleaning (remove redundant rows, combine/clarify headings across multiple cells)
+3. Create a subset containing the data we want to focus on
+4. Perform analysis
+
+The files are in the same folder in this script with names like *RS_2015-16_data_by_LA_-_Revision.xlsx* - but 5 use one format and the latest 2 use a different format.
+
+Let's start with activating some useful packages.
+
+```{r}
+#Activate the library for handling Excel files, and for calling URLs
+library(readxl)
+library(httr)
+```
+
+## Clean the spreadsheet while importing
+
+Now to import those sheets, and clean along the way. 
+
+There are two problems here: first, the column headers don't start until row 4; and second, those headers are spread across 3 rows.
+
+The most detailed headings are in row 7, with related codes for each heading in row 6, and broader categories in row 5. So we skip to row 7 for the main dataset, and store the other headings in another data frame just in case.
+
+This is best stored in a function so we can run it on the new data, but we test it first.
+
+```{r}
+#Read that file into a new data frame
+#We want the 3rd sheet, and to skip the first 6 lines so row 7 is used for headers
+#We also ask it to class dashes and lack of data as NA
+ro1516 <- read_excel("RS_2015-16_data_by_LA_-_Revision.xlsx", 
+                              sheet = 3, 
+                              skip = 6, 
+                              na = "c('-','')",
+                     col_types = "guess") #This helps numeric columns be treated as such
+summary(ro1516)
+#Grab the other headings
+ro1516.otherheads <- read_excel("RS_2015-16_data_by_LA_-_Revision.xlsx", 
+                                sheet = 3, skip = 4, n_max = 1, range = "A6:IR6")
+
+
+ro1617 <- read_excel("RS_2016-17_data_by_LA.xlsx", 
+                              sheet = 3, 
+                              skip = 6, 
+                              na = "c('-','')")
+# Test the columns are the same
+colnames(ro1516) == colnames(ro1617)
+
+```
+
+The columns are not the same. So we need to extract a few and create two data frames which are the same:
+
+```{r}
+#Check the colnames
+colnames(ro1516) 
+#Add to the front of each the code from the other list
+colnames(ro1516) <- paste(head(colnames(ro1516.otherheads),length(colnames(ro1516))),
+                          colnames(ro1516), sep=":")
+colnames(ro1516) 
+```
+
+
+## Create a subset
+
+There are 252 variables in this spreadsheet, so let's narrow down to the ones we want to focus on.
+
+We can use regex to find the columns where 'Social Care' is mentioned:
+
+```{r}
+#The grepl function is used to generate a series of TRUE/FALSE matches for each column
+#That is then nested within square brackets after the colnames function to show those that are TRUE
+colnames(ro1516)[grepl("Social Care",colnames(ro1516))]
+#Let's try some others
+colnames(ro1516)[grepl(".*Highway.*",colnames(ro1516))]
+colnames(ro1516)[grepl(".*GFRA*",colnames(ro1516))]
+colnames(ro1516)[grepl("Public Health",colnames(ro1516))]
+colnames(ro1516)[grepl(".*Cultural*",colnames(ro1516))]
+colnames(ro1516)[grepl(".*Environmental*",colnames(ro1516))]
+colnames(ro1516)[grepl(".*Planning*",colnames(ro1516))]
+colnames(ro1516)[grepl(".*Education*",colnames(ro1516))]
+#And reserves
+colnames(ro1516)[grepl(".*at 1 April*",colnames(ro1516))]
+```
+
+We also need to grab the first few columns:
+
+```{r}
+ro1516.las <- ro1516[c(1,2,3,5)]
+```
+
+
+
+Now that we think we have the right columns, let's generate that subset:
+
+```{r}
+listofterms <- "Social Care|Highway|GFRA|Public Health|Cultural|Environmental|Planning|Education|at 1 April"
+#We remove 'colnames' now so we are accessing the data frame as a whole
+ro1516.sub <- ro1516[grepl(listofterms,
+                           colnames(ro1516))]
+#Add in the LA details extracted earlier
+ro1516.sub <- cbind(ro1516.las,ro1516.sub)
+```
+
+We've now gone from 252 variables to 20, which is going to be much easier to deal with.
+
+## Storing in a function
+
+The question is, can we store all those steps in a function so we don't have to write them all over again?
+
+```{r}
+stripbackro.horiz <- function(filename, year){
+  #read from Excel into an object 
+  roobject <- read_excel(filename, 
+                          sheet = 3, 
+                          skip = 6, 
+                          na = "c('-','')",
+                         col_types = "guess")
+  #Store the first few columns separately
+  roobject.las <- roobject[c(1,2,3,5)]
+  #Read from Excel again to grab the codes
+  roobject.otherheads <- read_excel(filename, 
+                                sheet = 3, skip = 4, n_max = 1, range = "A6:IR6")
+  #Combine the codes with the relevant column headings
+  colnames(roobject) <- paste(head(colnames(roobject.otherheads),length(colnames(roobject))),
+                          colnames(roobject), sep=": ")
+  #Add the year as a prefix
+  colnames(roobject) <- paste(year, colnames(roobject), sep=": ")
+  #Create a list of terms that we can use to filter
+  listofterms <- "Social Care|Highway|GFRA|Public Health|Cultural|Environmental|Planning|Education|at 1 April"
+  #Use grepl to filter to just those columns containing the keywords
+  roobject.sub <- roobject[grepl(listofterms,
+                           colnames(roobject))]
+  #Add in the LA details extracted earlier
+  roobject.sub <- cbind(roobject.las,roobject.sub)
+  #No need to add the year in this version
+  #roobject.sub$year <- year
+  #Return to whatever called this function
+  return(roobject.sub)
+}
+```
+
+And can we remove the 'other' and shire districts..?
+
+### Subsetting by type of organisation
+
+We also need to remove all the organisations we don't want. The type of organisation is shown in the 'Class' column:
+
+```{r}
+table(ro1516$`X__1:Class`)
+```
+
+We don't want shire districts (SD), or other authorities such as police or fire (O). 
+
+```{r}
+stripbackro.horiz <- function(filename, year){
+  #read from Excel into an object 
+  roobject <- read_excel(filename, 
+                          sheet = 3, 
+                          skip = 6, 
+                          na = "c('-','')",
+                         col_types = "guess")
+  #Store the first few columns separately
+  roobject.las <- roobject[c(1,2,3,5)]
+  #Read from Excel again to grab the codes
+  roobject.otherheads <- read_excel(filename, 
+                                sheet = 3, skip = 4, n_max = 1, range = "A6:IR6")
+  #Combine the codes with the relevant column headings
+  colnames(roobject) <- paste(head(colnames(roobject.otherheads),length(colnames(roobject))),
+                          colnames(roobject), sep=": ")
+  #Add the year as a prefix
+  colnames(roobject) <- paste(year, colnames(roobject), sep=": ")
+  #Create a list of terms that we can use to filter
+  listofterms <- "Social Care|Highway|GFRA|Public Health|Cultural|Environmental|Planning|Education|at 1 April"
+  #Use grepl to filter to just those columns containing the keywords
+  roobject.sub <- roobject[grepl(listofterms,
+                           colnames(roobject))]
+  #Add in the LA details extracted earlier
+  roobject.sub <- cbind(roobject.las,roobject.sub)
+  #No need to add the year in this version
+  #roobject.sub$year <- year
+  #Subset so we don't have those with Class codes O or SD
+  roobject.sub <- subset(roobject.sub,roobject.sub$Class != "O" & roobject.sub$Class != "SD")
+  #Subset so we only have rows where the code is not NA
+  roobject.sub <- subset(roobject.sub,roobject.sub$`E-code` != "NA")
+  #Return to whatever called this function
+  return(roobject.sub)
+}
+```
+
+And let's try it:
+
+```{r}
+#Supply 2 arguments: the filename and the year
+ro1617.sub.horiz <- stripbackro.horiz("RS_2016-17_data_by_LA.xlsx", 2017)
+#Show first few rows
+head(ro1617.sub.horiz)
+table(ro1617.sub.horiz$Class)
+```
+
+
+```{r}
+#Supply 2 arguments: the filename and the year
+ro1516.sub.horiz <- stripbackro.horiz("RS_2015-16_data_by_LA_-_Revision.xlsx", 2016)
+#Show first few rows
+head(ro1516.sub.horiz)
+table(ro1516.sub.horiz$Class)
+```
+
+## Combining the files
+
+We can try a `cbind` 
+
+```{r}
+ro.all.horiz <- cbind(ro1516.sub.horiz,ro1617.sub.horiz)
+```
+
+This will only work if both have the same number of rows, and also assumes that the rows are in the same order. We can re-do this with a proper `join` function using the `sqldf` package later.
+
+
+## Repeating for the older datasets
+
+The older datasets have a different structure so need to be imported and handled separately before being combined.
+
+```{r}
+#Read the file into a new data frame
+#We want the 3rd sheet, and to skip the first 5 lines so row 6 is used for headers
+#We also ask it to class dashes and lack of data as NA
+ro1011 <- read_excel("Revenue_Outturn_Summary__RS__data_2010-11_by_LA_-_27-Nov-2012-v2.xls", sheet = 3, skip = 5, na = "c('-','')",col_types = "guess")
+
+ro1112 <- read_excel("Revenue_Outturn_Summary__RS__data_2011-12_by_LA_-_Revised_28-Nov-2013.xls", sheet = 3, skip = 5, na = "c('-','')",col_types = "guess")
+
+ro1213 <- read_excel("Revenue_Outturn_Summary__RS__data_2012-13_by_LA__Revised__-_18-Feb-2014.xls", sheet = 3, skip = 5, na = "c('-','')",col_types = "guess")
+```
+
+Again we can see that the column names will need to be made consistent. 
+
+First, though, let's create a function to whittle the data down
+
+Once again, use regex to find the columns where 'Social Care' and other terms are mentioned:
+
+```{r}
+#The grepl function is used to generate a series of TRUE/FALSE matches for each column
+#That is then nested within square brackets after the colnames function to show those that are TRUE
+colnames(ro1011)[grepl(".*Education*",colnames(ro1011))]
+colnames(ro1011)[grepl(".*Highway.*",colnames(ro1011))]
+colnames(ro1011)[grepl("Social Care",colnames(ro1516))]
+colnames(ro1011)[grepl("Public Health",colnames(ro1011))]
+colnames(ro1011)[grepl(".*GFRA*",colnames(ro1011))]
+colnames(ro1011)[grepl(".*Cultural*",colnames(ro1011))]
+colnames(ro1011)[grepl(".*Environmental*",colnames(ro1011))]
+colnames(ro1011)[grepl(".*Planning*",colnames(ro1011))]
+#And reserves - this doesn't work with 1 April so we are more literal
+colnames(ro1011)[grepl(".*reserves*",colnames(ro1011))]
+```
+
+Some of these are the fields we want:
+
+```{r}
+colnames(ro1516.sub)
+```
+
+
+
+
+Looking at the spreadsheets themselves we can note that most of the key fields are in the first 12 columns, but as the years go on, child social care is added in 2011/12 and then public health in 2012/13. In 2014/15 everything shifts one column to the right as they add region, and ONS codes appear. That dataset might need to be handled separately.
+
+It is tricky anyway: we need to account for columns of missing data.
+
+```{r}
+stripbackropre14.horiz <- function(filename, year){
+  #read from Excel into an object 
+  roobject <- read_excel(filename, 
+                          sheet = 3, 
+                          skip = 5, 
+                          na = "c('-','')",
+                         col_types = "guess")
+  #Store the first 14 columns separately - these have most info
+  roobject.sub <- roobject[seq(1,14)]
+  #Use grepl to filter to just those columns containing the keyword 'reserves'
+  roobject.res <- roobject[grepl("reserves",
+                           colnames(roobject))]
+  #Add to other object
+  roobject.sub <- cbind(roobject.sub,roobject.res)
+  #Subset so we don't have those with Class codes O or SD
+  roobject.sub <- subset(roobject.sub,roobject.sub$Class != "O" & roobject.sub$Class != "SD")
+  #Subset so we only have rows where the code is not NA
+  roobject.sub <- subset(roobject.sub,roobject.sub$`E-code` != "NA")
+  #Add the year as a prefix
+  colnames(roobject.sub) <- paste(year, colnames(roobject.sub), sep=": ")
+  #Return to whatever called this function
+  return(roobject.sub)
+}
+```
+
+Now test:
+
+```{r}
+ro1011.sub.horiz <- stripbackropre14.horiz("Revenue_Outturn_Summary__RS__data_2010-11_by_LA_-_27-Nov-2012-v2.xls",2011)
+
+ro1112.sub.horiz <- stripbackropre14.horiz("Revenue_Outturn_Summary__RS__data_2011-12_by_LA_-_Revised_28-Nov-2013.xls",2012)
+
+ro1213.sub.horiz <- stripbackropre14.horiz("Revenue_Outturn_Summary__RS__data_2012-13_by_LA__Revised__-_18-Feb-2014.xls",2013)
+
+ro1314.sub.horiz <- stripbackropre14.horiz("Revenue_Outturn_Summary__RS__data_2013-14_by_LA_-_Revised_28-Jan-2015.xls",2014)
+
+ro1415.sub.horiz <- stripbackropre14.horiz("Revenue_Outturn_Summary__RS__data_2014-15_by_LA_-_02-Feb-2016.xls",2015)
+```
+
+And then combine:
+
+```{r}
+ro.all.horiz <- cbind(ro1011.sub.horiz,ro1112.sub.horiz,ro1213.sub.horiz,ro1314.sub.horiz,ro1415.sub.horiz,ro1516.sub.horiz,ro1617.sub.horiz)
+colnames(ro.all.horiz)
+```
+
+
+## Cleaning data types
+
+To check if we need more cleaning we can generate a summary:
+
+```{r}
+summary(ro.all.horiz)
+```
+
+## Showing changes
+
+```{r}
+#First make a copy to work on
+ro.all.change <- ro.all.horiz
+#Create a check column
+ro.all.change$does11match16 <- ro.all.change$`2011: E-code` == ro.all.change$`E-code`
+table(ro.all.change$does11match16)
+#This line works for 2016 but 2017 throws an error as it is stored as character
+ro.all.change$highways11to16 <- ro.all.change$`2016: 290: Highways and transport services` - ro.all.change$`2011: Highways and transport services`
+head(ro.all.change$highways11to16)
+```
+
+Here's a problem column:
+
+```{r}
+summary(ro.all.change$`2017: 290: Highways and transport services`)
+```
+
+Let's check it converts to numeric OK:
+
+
+```{r}
+head(ro.all.change$`2017: 290: Highways and transport services`)
+head(as.numeric(ro.all.change$`2017: 290: Highways and transport services`))
+```
+And use that to calculate a difference:
+
+```{r}
+ro.all.change$highways11to17 <- as.numeric(ro.all.change$`2017: 290: Highways and transport services`) - ro.all.change$`2011: Highways and transport services`
+head(ro.all.change$highways11to17)
+```
+
+## Try SQL
+
+Test with a simple one first:
+
+```{r}
+library(sqldf)
+sqldf("select Class, count(*) from ro1011 
+      group by Class
+      order by count(*) desc")
+```
+
+You can perform calculations:
+
+```{r}
+sqldf("select `Local authority`, `Other services` - `Central services` as otherminuscentral from ro1011
+      order by otherminuscentral desc")
+```
+
+
+```{r}
+#sqldf won't work with ro.all.change or ro.all.horiz
+#but for some reason recreating it this way solves it
+roallhoriz <- ro.all.horiz[seq(1,144)]
+sqldf("select count(*) from roallhoriz")
+head(roallhoriz$`2011: Cultural and related services`)
+head(roallhoriz$`2017: 509: Cultural and related services`)
+changeculture11to17 <- sqldf("select `Local authority`, (`2017: 509: Cultural and related services` * 1000) - (`2011: Cultural and related services` * 1000) as changeculture11to17, `2017: 509: Cultural and related services` * 1000, `2011: Cultural and related services` * 1000 from roallhoriz
+      order by changeculture11to17 asc")
+changeculture11to17
+```
+
+Let's try some others:
+
+```{r}
+changeenviro11to17 <- sqldf("select `Local authority`, (`2017: 590: Environmental and regulatory services` * 1000) - (`2011: Environmental and regulatory services` * 1000) as changeculture11to17, (`2017: 590: Environmental and regulatory services` * 1000 - `2011: Environmental and regulatory services` * 1000) / (`2011: Environmental and regulatory services` * 1000) as changeperc, `2017: 590: Environmental and regulatory services` * 1000, `2011: Environmental and regulatory services` * 1000 from roallhoriz
+      order by changeperc asc")
+mean(changeenviro11to17$changeperc)
+median(changeenviro11to17$changeperc)
+changeenviro11to17
+```
+Now planning
+
+```{r}
+#This worked below so something must have been changed in the lines below which now breaks this
+changeplanning11to17 <- sqldf("select `Local authority`, (
+`2017: 599: Planning and development services` * 1000) - (
+`2011: Planning and development services` * 1000) as changeculture11to17, (
+`2017: 599: Planning and development services` * 1000 - 
+`2011: Planning and development services` * 1000) / (
+`2011: Planning and development services` * 1000) as changeperc, 
+`2017: 599: Planning and development services` * 1000, 
+`2011: Planning and development services` * 1000 from roallhoriz
+      order by changeperc asc")
+mean(changeplanning11to17$changeperc)
+median(changeplanning11to17$changeperc)
+changeplanning11to17
+```
+
+We can't go back to 2010/11 for the change in social care because the figures were combined then.
+
+```{r}
+
+changechildsoc12to17 <- sqldf("select `Local authority`, (
+`2017: 330: Children Social Care` * 1000) - (
+`2012: Children Social Care` * 1000) as changeculture11to17, (
+`2017: 330: Children Social Care` * 1000 - 
+`2012: Children Social Care` * 1000) / (
+`2012: Children Social Care` * 1000) as changeperc, 
+`2017: 330: Children Social Care` * 1000, 
+`2012: Children Social Care` * 1000 from roallhoriz
+      order by changeperc asc")
+mean(changechildsoc12to17$changeperc)
+median(changechildsoc12to17$changeperc)
+changechildsoc12to17
+```
+
+We can't go back to 2010/11 for the change in social care because the figures were combined then.
+
+```{r}
+changeotherearmarked11to17 <- sqldf("select `Local authority`, (`2017: 915: Other earmarked financial reserves level at 1 April` * 1000) - (`2011: Other earmarked financial reserves level` * 1000) as changeculture11to17, (`2017: 915: Other earmarked financial reserves level at 1 April` * 1000 - `2011: Other earmarked financial reserves level` * 1000) / (`2011: Other earmarked financial reserves level` * 1000) as changeperc, `2017: 915: Other earmarked financial reserves level at 1 April` * 1000, `2011: Other earmarked financial reserves level` * 1000 from roallhoriz order by changeperc asc")
+mean(changeotherearmarked11to17$changeperc)
+median(changeotherearmarked11to17$changeperc)
+changeotherearmarked11to17
+```
+
+## SQL queries across multiple objects
+
+Instead of querying the combined data we could use SQL to query the earliest and latest datasets.
+
+```{r}
+sqldf("SELECT ro1011.`E-code`, ro1011.`Local authority`, ro1011.`Class`, ro1011.`Cultural and related services` AS culture1011, ro1617.`Cultural and related services` as culture1617, ro1617.`Cultural and related services` - ro1011.`Cultural and related services` AS culchange1117, (ro1617.`Cultural and related services` - ro1011.`Cultural and related services`)/ro1011.`Cultural and related services` AS culpercchange1117 from ro1011 
+      LEFT JOIN ro1617 
+      ON ro1011.`Local authority` = ro1617.`Local authority`
+      WHERE ro1011.`Class` != 'O' AND ro1011.`Class` != 'SD' AND ro1011.`E-code` != 'NA'
+      ORDER BY culpercchange1117 ASC
+      ")
+```
+
