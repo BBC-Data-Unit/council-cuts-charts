@@ -3,6 +3,7 @@ title: "Council accounts"
 output: html_notebook
 ---
 
+
 # Council accounts - combining
 
 This notebook details the process of combining council accounts.
@@ -342,13 +343,7 @@ ro1011.sub <- stripbackropre14("Revenue_Outturn_Summary__RS__data_2010-11_by_LA_
 ro1112.sub <- stripbackropre14("Revenue_Outturn_Summary__RS__data_2011-12_by_LA_-_Revised_28-Nov-2013.xls",2012)
 ```
 
-***5 cols to add - HRA fix plus reserves***
-***NO DATA NEEDS FIXING IN 2012***
-***201415 data needs adding***
-
-
-
-
+*Note: data needs cleaning in 2012, 201415 data needs adding*
 
 ## Cleaning data types
 
