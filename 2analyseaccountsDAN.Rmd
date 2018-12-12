@@ -1,0 +1,126 @@
+---
+title: "Council accounts"
+output: html_notebook
+---
+
+# Council accounts - analysis
+
+With the accounts downloaded, cleaned, and filtered into a subset (see other notebook in this folder), this notebook deals with the analysis.
+
+## Totals spent
+
+We can calculate a basic total for a column:
+
+```{r}
+table(reservesdataonly.councils[,5])
+sum(reservesdataonly.councils[,5])
+```
+
+But the column needs to be numeric first:
+
+```{r}
+sum(reservesdataonly.councils[,6])
+```
+
+```{r}
+#Parse as integers
+parse_integer(reservesdataonly.councils[,6])
+#Replace column with numeric version
+reservesdataonly.councils[,6] <- parse_integer(reservesdataonly.councils[,6])
+#Sum - this returns NA
+sum(reservesdataonly.councils[,6])
+#Table to show frequency of numbers
+table(reservesdataonly.councils[,6])
+```
+
+## Comparing two columns for different years
+
+Let's compare the unallocated financial reserves for 2017 and 2018. First, find the columns:
+
+```{r}
+colnames(reservesdataonly.councils)
+```
+
+Columns 15 and 19 seem to be the key ones:
+
+```{r}
+#colnames(reservesdataonly.councils)[grepl(".*unallocated.*",colnames(reservesdataonly.councils))]
+colnames(reservesdataonly.councils[15])
+colnames(reservesdataonly.councils[19])
+colnames(reservesdataonly.councils[14])
+colnames(reservesdataonly.councils[18])
+```
+
+As before, these are probably stored as character, so let's check that and then convert to number:
+
+```{r}
+reservesdataonly.councils[,15]
+summary(reservesdataonly.councils[,15])
+reservesdataonly.councils[,15] <- parse_number(reservesdataonly.councils[,15])
+summary(reservesdataonly.councils[,15])
+```
+
+Then repeat for column 19:
+
+```{r}
+reservesdataonly.councils[,19]
+summary(reservesdataonly.councils[,19])
+reservesdataonly.councils[,19] <- parse_number(reservesdataonly.councils[,19])
+summary(reservesdataonly.councils[,19])
+```
+
+
+Then repeat for column 14:
+
+```{r}
+reservesdataonly.councils[,14]
+summary(reservesdataonly.councils[,14])
+reservesdataonly.councils[,14] <- parse_number(reservesdataonly.councils[,14])
+summary(reservesdataonly.councils[,14])
+```
+
+And column 18
+
+```{r}
+reservesdataonly.councils[,18]
+summary(reservesdataonly.councils[,18])
+reservesdataonly.councils[,18] <- parse_number(reservesdataonly.councils[,18])
+summary(reservesdataonly.councils[,18])
+```
+
+
+
+
+Let's create a column showing the amount spent from unallocated reserves (positive numbers = spending):
+
+
+```{r}
+reservesdataonly.councils$unallocated_reserves_spend <- parse_integer(reservesdataonly.councils[,15])-parse_integer(reservesdataonly.councils[,19])
+```
+
+And now one showing the spending in earmarked reserves:
+
+```{r}
+reservesdataonly.councils$earmarked_reserves_spend <- parse_integer(reservesdataonly.councils[,14])-parse_integer(reservesdataonly.councils[,18])
+```
+
+Now a column showing the total in reserves, allocated and earmarked at the start of the year
+
+```{r}
+reservesdataonly.councils$totalreserves_april <- parse_integer(reservesdataonly.councils[,14])+parse_integer(reservesdataonly.councils[,15])
+```
+
+Now a column showing the total in reserves, allocated and earmarked at the end of the year
+```{r}
+reservesdataonly.councils$totalreserves_march <- parse_integer(reservesdataonly.councils[,18])+parse_integer(reservesdataonly.councils[,19])
+```
+
+Now a column showing the total spent from reserves, allocated and earmarked over the financial year
+```{r}
+reservesdataonly.councils$totalreservesspend <- parse_integer(reservesdataonly.councils[,28])-parse_integer(reservesdataonly.councils[,29])
+```
+
+
+
+,,
+

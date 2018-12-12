@@ -1,0 +1,191 @@
+---
+title: "Council accounts"
+output: html_notebook
+---
+
+# Council accounts - analysis
+
+With the accounts downloaded, cleaned, and filtered into a subset (see other notebook in this folder), this notebook deals with the analysis.
+
+## Create a working copy
+
+We need to create a working copy first so the original is untouched.
+
+```{r}
+#Create a working copy
+reservesdataonly.councils.wc <- reservesdataonly.councils
+```
+
+## Convert characters to numbers
+
+The `tidyverse` package can help us clean up data types:
+
+```{r}
+library(tidyverse)
+#Generate a summary of what it would look like if we parsed as double (number with decimals)
+summary(parse_double(reservesdataonly.councils.wc[,5]))
+#Now replace that column with a version parsed as integer
+reservesdataonly.councils.wc[,5] <- parse_double(reservesdataonly.councils.wc[,5])
+#Summarise that column 
+summary(reservesdataonly.councils.wc[,5])
+```
+
+We need to repeat this for any other columns we want to work with.
+
+```{r}
+colnames(reservesdataonly)
+colnames(reservesdataonly.headings)
+```
+
+
+## Totals spent
+
+We can calculate a basic total for a column:
+
+```{r}
+table(reservesdataonly.councils.wc[,5])
+sum(reservesdataonly.councils.wc[,5])
+```
+
+But the column needs to be numeric first:
+
+```{r}
+sum(reservesdataonly.councils.wc[,6])
+```
+
+```{r}
+#Parse as doubles
+parse_double(reservesdataonly.councils.wc[,6])
+#Replace column with numeric version
+reservesdataonly.councils.wc[,6] <- parse_double(reservesdataonly.councils.wc[,6])
+#Sum - this returns NA
+sum(reservesdataonly.councils.wc[,6])
+#Table to show frequency of numbers
+table(reservesdataonly.councils.wc[,6])
+```
+
+## Comparing two columns for different years
+
+Let's compare the unallocated financial reserves for 2017 and 2018. First, find the columns:
+
+```{r}
+colnames(reservesdataonly.councils.wc)
+```
+
+Columns 15 and 19 seem to be the key ones:
+
+```{r}
+#colnames(reservesdataonly.councils)[grepl(".*unallocated.*",colnames(reservesdataonly.councils))]
+colnames(reservesdataonly.councils.wc[15])
+colnames(reservesdataonly.councils.wc[19])
+colnames(reservesdataonly.councils.wc[14])
+colnames(reservesdataonly.councils.wc[18])
+```
+
+As before, these are probably stored as character, so let's check that and then convert to number:
+
+```{r}
+reservesdataonly.councils.wc[,15]
+summary(reservesdataonly.councils.wc[,15])
+reservesdataonly.councils.wc[,15] <- parse_number(reservesdataonly.councils.wc[,15])
+summary(reservesdataonly.councils.wc[,15])
+```
+
+Then repeat for column 19:
+
+```{r}
+reservesdataonly.councils.wc[,19]
+summary(reservesdataonly.councils.wc[,19])
+reservesdataonly.councils.wc[,19] <- parse_number(reservesdataonly.councils.wc[,19])
+summary(reservesdataonly.councils.wc[,19])
+```
+
+
+Then repeat for column 14:
+
+```{r}
+reservesdataonly.councils.wc[,14]
+summary(reservesdataonly.councils.wc[,14])
+reservesdataonly.councils.wc[,14] <- parse_number(reservesdataonly.councils.wc[,14])
+summary(reservesdataonly.councils.wc[,14])
+```
+
+And column 18
+
+```{r}
+reservesdataonly.councils.wc[,18]
+summary(reservesdataonly.councils.wc[,18])
+reservesdataonly.councils.wc[,18] <- parse_number(reservesdataonly.councils.wc[,18])
+summary(reservesdataonly.councils.wc[,18])
+```
+
+We are getting errors for the same rows, so we need to strip those out before we can do a calculation.
+
+But because we will need to reintegrate later when exporting, we need to store it first:
+
+```{r}
+#First store the NA values
+reservesdataonly.councils.naonly <- subset(reservesdataonly.councils.wc,is.na(reservesdataonly.councils.wc[,18]))
+#Then remove them so we can do analysis
+reservesdataonly.councils.wc <- subset(reservesdataonly.councils.wc,!is.na(reservesdataonly.councils.wc[,18]))
+```
+
+
+
+Let's create a column showing the amount spent from unallocated reserves (positive numbers = spending):
+
+
+```{r}
+#parse_number used in this and below calculations as parse_integer generates NA results where there are decimal places
+reservesdataonly.councils.wc$unallocated_reserves_spend <- parse_number(reservesdataonly.councils.wc[,15])-parse_number(reservesdataonly.councils.wc[,19])
+```
+
+And now one showing the spending in earmarked reserves:
+
+```{r}
+reservesdataonly.councils.wc$earmarked_reserves_spend <- parse_number(reservesdataonly.councils.wc[,14])-parse_number(reservesdataonly.councils.wc[,18])
+```
+
+Now a column showing the total in reserves, allocated and earmarked at the start of the year
+
+```{r}
+reservesdataonly.councils.wc$totalreserves_april <- parse_number(reservesdataonly.councils.wc[,14])+parse_number(reservesdataonly.councils.wc[,15])
+```
+
+Now a column showing the total in reserves, allocated and earmarked at the end of the year
+```{r}
+reservesdataonly.councils.wc$totalreserves_march <- parse_number(reservesdataonly.councils.wc[,18])+parse_number(reservesdataonly.councils.wc[,19])
+```
+
+Now a column showing the total spent from reserves, allocated and earmarked over the financial year
+
+```{r}
+#Because the number of columns may vary I've specified the index of the last, and the penultimate (ncol-1) columns instead of 28 and 29
+reservesdataonly.councils.wc$totalreservesspend <- parse_number(reservesdataonly.councils.wc[,ncol(reservesdataonly.councils.wc)-1])-parse_number(reservesdataonly.councils.wc[,ncol(reservesdataonly.councils.wc)])
+```
+
+
+## Recombine and export
+
+Now we can bring in those NA rows - but we need to give it the same extra columns so it will fit:
+
+```{r}
+reservesdataonly.councils.naonly$unallocated_reserves_spend <- ""
+reservesdataonly.councils.naonly$totalreserves_april <- ""
+reservesdataonly.councils.naonly$totalreservesspend <- ""
+```
+
+Then combine using `rbind`:
+
+```{r}
+reservesdataonly.councils.export <- rbind(reservesdataonly.councils.wc, reservesdataonly.councils.naonly)
+```
+
+And export
+
+```{r}
+write.csv(reservesdataonly.councils.export,"councilaccountsanalysis.csv")
+```
+
+
+

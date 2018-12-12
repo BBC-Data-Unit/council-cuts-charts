@@ -1,0 +1,176 @@
+---
+title: "Council accounts"
+output: html_notebook
+---
+
+# Council accounts
+
+This notebook details the process of downloading, cleaning, and analysing council accounts.
+
+The data comes from the Ministry of Housing, Communities & Local Government's [Local authority revenue expenditure and financing collection](https://www.gov.uk/government/collections/local-authority-revenue-expenditure-and-financing#2018-to-2019). 
+
+This code relates to the [data for 2017/18](https://www.gov.uk/government/statistics/local-authority-revenue-expenditure-and-financing-england-2017-to-2018-budget-individual-local-authority-data) with the intention of re-using the script when new data is published.
+
+## Breaking down the problem
+
+Here are the tasks we need to complete:
+
+1. Download the spreadsheet directly from a URL
+2. Perform basic cleaning (remove redundant rows, combine/clarify headings across multiple cells)
+3. Create a subset containing the data we want to focus on
+4. Perform analysis
+
+## Download the data
+
+First we store the URL for the data, then download it. We can find the latest by going to [Local authority revenue expenditure and financing collection](https://www.gov.uk/government/collections/local-authority-revenue-expenditure-and-financing#2018-to-2019) and looking for the latest "Local authority revenue expenditure and financing England: [YEAR] budget individual local authority data" then within that "Revenue account (RA) budget [YEAR]".
+
+```{r}
+#Activate the library for handling Excel files, and for calling URLs
+library(readxl)
+library(httr)
+#Store the URL - this way we only need to change this line for the rest to work
+revenueaccountsurl <- "https://www.gov.uk/government/uploads/system/uploads/attachment_data/file/623097/RA_2017-18_data_by_LA.xlsx"
+#For 2018:
+revenueaccountsurl <- "https://assets.publishing.service.gov.uk/government/uploads/system/uploads/attachment_data/file/735627/RS_2017-18_data_by_LA.xlsx"
+#Fetch that file and save it locally with a new name
+GET(revenueaccountsurl, write_disk("revenueaccounts.xlsx", overwrite = T))
+```
+
+## Clean the spreadsheet while importing
+
+Now to import that, and clean it along the way. There are two problems here: first, the column headers don't start until row 4; and second, those headers are spread across 3 rows.
+
+The most detailed headings are in row 7, with related codes for each heading in row 6, and broader categories in row 5. So we skip to row 7 for the main dataset, and store the other headings in another data frame just in case.
+
+```{r}
+#Read that file into a new data frame
+#We want the 3rd sheet, and to skip the first 6 lines so row 7 is used for headers
+revenueaccounts <- read_excel("revenueaccounts.xlsx", sheet = 3, skip = 6, na = "c('-','')")
+#Rows 5 and 6 also contain useful info so we grab those just in case
+#We specify the range because otherwise it skips the blank cells in the first 5 columns
+#An alternative would be to change or remove the n_max so there are some full cells in those first 5 cols
+revenueaccounts.otherheads <- read_excel("revenueaccounts.xlsx", sheet = 3, skip = 4, n_max = 1, range = "A5:IR6")
+#Most of these are empty so we need to copy from the previous cell.
+#Start from index 2 because the i-1 below will generate an error otherwise
+for(i in seq(2,length(revenueaccounts.otherheads))){
+  #grab first two characters
+  first2 <- substr(colnames(revenueaccounts.otherheads)[i],0,2)
+  #If this is an unnamed column
+  if (first2 == "X_"){
+    #Replace with the name of the previous column
+    colnames(revenueaccounts.otherheads)[i] <- colnames(revenueaccounts.otherheads)[i-1]
+  }
+}
+```
+
+
+## Create a subset
+
+There are 252 variables in this spreadsheet, so let's narrow down to the ones we want to focus on.
+
+We can use regex to find the columns where 'Appropriations' are mentioned:
+
+```{r}
+#The grepl function is used to generate a series of TRUE/FALSE matches for each column
+#That is then nested within square brackets after the colnames function to show those that are TRUE
+colnames(revenueaccounts)[grepl(".*[Aa]ppropriations.*",colnames(revenueaccounts))]
+```
+
+We could try a different approach and look for 'reserves':
+
+```{r}
+colnames(revenueaccounts)[grepl(".*[Rr]eserves.*",colnames(revenueaccounts))]
+```
+
+Or we could look for either:
+
+```{r}
+#Note the pipe symbol "|" in the regex to indicate 'OR'
+colnames(revenueaccounts)[grepl(".*[Rr]eserves.*|.*[Aa]ppropriations.*",colnames(revenueaccounts))]
+```
+
+Now that we think we have the right columns, let's generate that subset:
+
+```{r}
+#We remove 'colnames' now so we are accessing the data frame as a whole
+reservesdataonly <- revenueaccounts[grepl(".*[Rr]eserves.*|.*[Aa]ppropriations.*",colnames(revenueaccounts))]
+#Keep a copy of the relative otherheads too - normally we would write this:
+#reservesdataonly.headings <- revenueaccounts.otherheads[grepl(".*[Rr]eserves.*|.*[Aa]ppropriations.*",colnames(revenueaccounts))]
+#But this throws an error because the otherheads is 252 and headings is 100
+length(colnames(reservesdataonly))
+length(colnames(revenueaccounts.otherheads))
+#Let's test why
+revenueaccounts.otherheads[seq(95,105)]
+#OK we can see that the HRA reserves heading just gets copied across where there are empty cells below. Let's clean that up.
+revenueaccounts.otherheads <- revenueaccounts.otherheads[seq(1,length(revenueaccounts))]
+#Now we can run that code:
+reservesdataonly.headings <- revenueaccounts.otherheads[grepl(".*[Rr]eserves.*|.*[Aa]ppropriations.*",colnames(revenueaccounts))]
+#Combine the 3 headings
+combinedheads <- paste(colnames(reservesdataonly),colnames(reservesdataonly.headings),as.character(reservesdataonly.headings[1,]),sep=" : ")
+combinedheads
+#Assign as column headings
+colnames(reservesdataonly) <- combinedheads
+#Create a subset of just the basic names and codes in the first few columns - we'll probably need this again so useful to save as a separate data frame
+councillist <- revenueaccounts[c(1:3,5)]
+#Combine the two using cbind
+reservesdataonly <- cbind(councillist,reservesdataonly)
+```
+
+We've now gone from 252 variables to 25, which is going to be much easier to deal with.
+
+### Subsetting by type of organisation
+
+We also need to remove all the organisations we don't want. The type of organisation is shown in the 'Class' column:
+
+```{r}
+table(reservesdataonly$Class)
+```
+
+We don't want shire districts (SD), or other authorities such as police or fire (O). 
+
+```{r}
+reservesdataonly.councils <- subset(reservesdataonly, reservesdataonly$Class != "O" & reservesdataonly$Class != "SD")
+table(reservesdataonly.councils$Class)
+```
+
+This gives us a data frame with 156 rows - 4 more than we might expect. This is because aggregate figures for each type (4 types) are also in the data. 
+
+These make up the last 4 rows and have no code:
+
+```{r}
+#Subset so we only have rows where the code is not NA
+reservesdataonly.councils <- subset(reservesdataonly.councils,reservesdataonly.councils$`E-code` != "NA")
+#Check a table to see each number has gone down by 1
+table(reservesdataonly.councils$Class)
+```
+
+
+
+## Cleaning data types
+
+To check if we need more cleaning we can generate a summary:
+
+```{r}
+summary(reservesdataonly.councils)
+```
+
+This indicates that many of the columns have been imported as characters, rather than numeric, most likely because of the presence of dashes.
+
+We need to fix this. Let's use the `tidyverse` library and use its `guess_parser` function to see what it thinks of one of the columns:
+
+```{r}
+library(tidyverse)
+#Guess the first number columns
+guess_parser(reservesdataonly.councils[,5])
+```
+
+Now a `table` to see what values are in that column:
+
+```{r}
+summary(reservesdataonly.councils[,5])
+table(reservesdataonly.councils[,5])
+```
+
+We'll need to parse it instead as a number during any analysis.
+
+The analysis now takes place in a separate notebook.
