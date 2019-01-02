@@ -40,3 +40,7 @@ The cleaning, combination and analysis was largely done in R. You can find a num
 * The R function script [stripbackro.horiz.R](https://github.com/BBC-Data-Unit/council-cuts-charts/blob/master/stripbackro.horiz.R) takes an Excel filename and a year, then returns a subset for main categories of spending with the year added as a prefix for the columns
 * The R script [givemesqlquery.fromto.R](https://github.com/BBC-Data-Unit/council-cuts-charts/blob/master/givemesqlquery.fromto.R) will, given a column name, and the names of 2 data frames, generate a SQL query that will generate 
 #a table showing change from one data frame to another
+
+## Related repos
+
+* You can [find all stories tagged 'cuts' that the data units have been involved in here](https://github.com/search?q=topic%3Acuts+org%3ABBC-Data-Unit&type=Repositories)
